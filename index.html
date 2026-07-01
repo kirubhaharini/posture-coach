@@ -1,0 +1,578 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Posture Coach</title>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+<style>
+:root {
+  --bg:     #0f1117;
+  --panel:  #141820;
+  --card:   #1c2130;
+  --border: #252d3d;
+  --text:   #dde3f0;
+  --muted:  #5a6482;
+  --green:  #4caf82;
+  --amber:  #f0a830;
+  --red:    #e05c6a;
+  --blue:   #5b8def;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { width: 100%; height: 100%; background: var(--bg); color: var(--text); overflow: hidden; }
+body { display: flex; font-family: system-ui, sans-serif; }
+
+/* ── Camera side ─────────────────────────────────────────────── */
+#cam-wrap {
+  flex: 1; position: relative; background: #000; overflow: hidden;
+}
+#c { width: 100%; height: 100%; display: block; object-fit: cover; }
+
+/* Status overlays */
+#badge {
+  position: absolute; top: 18px; left: 50%; transform: translateX(-50%);
+  background: rgba(15,17,23,0.75); border: 1px solid var(--border);
+  border-radius: 20px; padding: 6px 16px;
+  font-size: 12px; letter-spacing: 2px; text-transform: uppercase;
+  color: var(--muted); backdrop-filter: blur(6px);
+  transition: opacity .4s;
+}
+#badge.hidden { opacity: 0; pointer-events: none; }
+
+/* Alert bar */
+#alert {
+  position: absolute; bottom: 0; left: 0; right: 0;
+  background: rgba(224, 92, 106, 0.92);
+  padding: 14px 24px; display: flex; align-items: center; gap: 12px;
+  font-size: 15px; font-weight: 500; letter-spacing: .5px;
+  transform: translateY(100%); transition: transform .3s ease;
+  backdrop-filter: blur(4px);
+}
+#alert.show { transform: translateY(0); }
+#alert .icon { font-size: 20px; }
+#alert-issues { font-size: 12px; opacity: .85; }
+
+/* ── Right panel ─────────────────────────────────────────────── */
+#panel {
+  width: 288px; min-width: 288px; background: var(--panel);
+  border-left: 1px solid var(--border);
+  display: flex; flex-direction: column; overflow-y: auto;
+}
+#panel::-webkit-scrollbar { width: 4px; }
+#panel::-webkit-scrollbar-thumb { background: var(--border); }
+
+.p-head {
+  padding: 22px 22px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.p-head h1 { font-size: 16px; font-weight: 600; }
+.p-head p  { font-size: 11px; color: var(--muted); margin-top: 3px; }
+
+/* Score ring */
+.score-section {
+  display: flex; flex-direction: column; align-items: center;
+  padding: 24px 0 16px;
+  border-bottom: 1px solid var(--border);
+}
+#score-label {
+  font-size: 11px; letter-spacing: 3px; text-transform: uppercase;
+  color: var(--muted); margin-bottom: 14px;
+}
+
+/* Issues */
+.section { padding: 16px 20px; border-bottom: 1px solid var(--border); }
+.section-title {
+  font-size: 10px; letter-spacing: 3px; text-transform: uppercase;
+  color: var(--muted); margin-bottom: 12px;
+}
+
+.issue {
+  display: flex; align-items: center; gap: 10px;
+  padding: 7px 0; font-size: 13px;
+  border-bottom: 1px solid rgba(37,45,61,0.5);
+}
+.issue:last-child { border-bottom: none; }
+
+.dot {
+  width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+  background: var(--muted); transition: background .3s;
+}
+.dot.good { background: var(--green); box-shadow: 0 0 6px var(--green); }
+.dot.warn { background: var(--amber); box-shadow: 0 0 6px var(--amber); }
+.dot.bad  { background: var(--red);   box-shadow: 0 0 6px var(--red);   }
+
+.issue-label { flex: 1; }
+.issue-hint  { font-size: 10px; color: var(--muted); }
+
+/* Stats */
+.stat-row {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 6px 0; font-size: 13px;
+}
+.stat-row span:last-child { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.stat-good { color: var(--green); }
+.stat-bad  { color: var(--red);   }
+
+/* Calibrate */
+.cal-section { padding: 20px; margin-top: auto; }
+#cal-btn {
+  width: 100%; padding: 12px; border-radius: 10px; border: none;
+  background: var(--blue); color: #fff; font-size: 14px;
+  font-weight: 500; cursor: pointer; transition: background .15s, transform .1s;
+}
+#cal-btn:hover    { background: #3d6fd4; }
+#cal-btn:active   { transform: scale(.98); }
+#cal-btn:disabled { opacity: .4; cursor: not-allowed; }
+#cal-hint {
+  font-size: 11px; color: var(--muted); text-align: center;
+  margin-top: 8px; line-height: 1.5;
+}
+
+/* Sound toggle */
+#sound-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 20px; border-top: 1px solid var(--border);
+  font-size: 12px; color: var(--muted);
+}
+.toggle {
+  width: 36px; height: 20px; border-radius: 10px; background: var(--border);
+  position: relative; cursor: pointer; transition: background .2s;
+}
+.toggle.on { background: var(--blue); }
+.toggle::after {
+  content: ''; position: absolute; width: 14px; height: 14px;
+  border-radius: 50%; background: #fff; top: 3px; left: 3px;
+  transition: left .2s;
+}
+.toggle.on::after { left: 19px; }
+</style>
+</head>
+<body>
+
+<div id="cam-wrap">
+  <canvas id="c"></canvas>
+  <div id="badge">Sit straight and calibrate →</div>
+  <div id="alert">
+    <span class="icon">⚠</span>
+    <div>
+      <div>Check your posture</div>
+      <div id="alert-issues"></div>
+    </div>
+  </div>
+</div>
+
+<div id="panel">
+  <div class="p-head">
+    <h1>Posture Coach</h1>
+    <p>Real-time posture feedback</p>
+  </div>
+
+  <div class="score-section">
+    <div id="score-label">Score</div>
+    <svg viewBox="0 0 120 120" width="148" height="148">
+      <circle cx="60" cy="60" r="50" fill="none" stroke="#252d3d" stroke-width="9"/>
+      <circle id="ring" cx="60" cy="60" r="50" fill="none"
+        stroke="#5a6482" stroke-width="9" stroke-linecap="round"
+        stroke-dasharray="314.16" stroke-dashoffset="314.16"
+        transform="rotate(-90 60 60)" style="transition: stroke-dashoffset .4s, stroke .4s"/>
+      <text id="score-num" x="60" y="64" text-anchor="middle" dominant-baseline="middle"
+        fill="#dde3f0" font-size="30" font-family="system-ui" font-weight="300">—</text>
+      <text x="60" y="83" text-anchor="middle" fill="#5a6482"
+        font-size="10" font-family="system-ui">OUT OF 100</text>
+    </svg>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Checks</div>
+    <div class="issue" id="i-tilt">
+      <div class="dot" id="d-tilt"></div>
+      <div class="issue-label">Head level</div>
+      <div class="issue-hint" id="h-tilt">—</div>
+    </div>
+    <div class="issue" id="i-shoulders">
+      <div class="dot" id="d-shoulders"></div>
+      <div class="issue-label">Shoulders even</div>
+      <div class="issue-hint" id="h-shoulders">—</div>
+    </div>
+    <div class="issue" id="i-slouch">
+      <div class="dot" id="d-slouch"></div>
+      <div class="issue-label">Not slouching</div>
+      <div class="issue-hint" id="h-slouch">—</div>
+    </div>
+    <div class="issue" id="i-neck">
+      <div class="dot" id="d-neck"></div>
+      <div class="issue-label">Neck upright</div>
+      <div class="issue-hint" id="h-neck">—</div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Session</div>
+    <div class="stat-row">
+      <span class="stat-good">Good posture</span>
+      <span id="stat-good">0:00</span>
+    </div>
+    <div class="stat-row">
+      <span class="stat-bad">Needs work</span>
+      <span id="stat-bad">0:00</span>
+    </div>
+    <div class="stat-row">
+      <span style="color:var(--muted)">Alerts sent</span>
+      <span id="stat-alerts">0</span>
+    </div>
+  </div>
+
+  <div id="sound-row">
+    <span>Alert sound</span>
+    <div class="toggle" id="sound-toggle"></div>
+  </div>
+
+  <div class="cal-section">
+    <button id="cal-btn" disabled>Calibrate</button>
+    <div id="cal-hint">Sit straight, look forward,<br>then click Calibrate</div>
+  </div>
+</div>
+
+<video id="v" playsinline autoplay muted style="display:none"></video>
+
+<script>
+'use strict';
+
+// ── Elements ──────────────────────────────────────────────────────────────────
+const canvas   = document.getElementById('c');
+const ctx      = canvas.getContext('2d');
+const video    = document.getElementById('v');
+const badge    = document.getElementById('badge');
+const alertBar = document.getElementById('alert');
+const calBtn   = document.getElementById('cal-btn');
+const ring     = document.getElementById('ring');
+const scoreNum = document.getElementById('score-num');
+const C        = 314.16; // circumference of r=50 circle
+
+// ── State ─────────────────────────────────────────────────────────────────────
+let baseline    = null;
+let lastResult  = null;
+let W = 0, H = 0;
+let coverScale = 1, coverOffX = 0, coverOffY = 0;
+
+// Session tracking
+let goodMs  = 0, badMs  = 0, alertCount = 0;
+let lastTs  = 0, badStreak = 0;
+const ALERT_AFTER = 8000; // ms of bad posture before alerting
+let alerted = false;
+let soundOn = false;
+
+// ── Cover-crop ────────────────────────────────────────────────────────────────
+function updateCover() {
+  const vw = video.videoWidth  || 1280;
+  const vh = video.videoHeight || 720;
+  coverScale = Math.max(W / vw, H / vh);
+  coverOffX  = (vw * coverScale - W) / 2;
+  coverOffY  = (vh * coverScale - H) / 2;
+}
+
+function resize() {
+  W = canvas.width  = canvas.offsetWidth;
+  H = canvas.height = canvas.offsetHeight;
+  updateCover();
+}
+
+window.addEventListener('resize', resize);
+
+// ── Posture metrics ───────────────────────────────────────────────────────────
+function metrics(lm) {
+  const ls = lm[11], rs = lm[12]; // shoulders
+  const le = lm[7],  re = lm[8];  // ears
+  const lh = lm[23], rh = lm[24]; // hips
+
+  const smx = (ls.x + rs.x) / 2; // shoulder midpoint x
+  const smy = (ls.y + rs.y) / 2;
+  const emx = (le.x + re.x) / 2; // ear midpoint x
+  const emy = (le.y + re.y) / 2;
+
+  return {
+    shoulderWidth:  Math.abs(ls.x - rs.x),
+    shoulderDiff:   ls.y - rs.y,         // 0 = even
+    earDiff:        le.y - re.y,         // 0 = head level
+    neckOffset:     emx - smx,           // 0 = centered above shoulders
+    earShoulderGap: smy - emy,           // ears above shoulders (positive)
+  };
+}
+
+// ── Calibrate ─────────────────────────────────────────────────────────────────
+function calibrate() {
+  if (!lastResult?.poseLandmarks) return;
+  baseline = metrics(lastResult.poseLandmarks);
+  calBtn.textContent = 'Recalibrate';
+  badge.classList.add('hidden');
+  goodMs = badMs = badStreak = alertCount = 0;
+  alerted = false;
+  alertBar.classList.remove('show');
+  updateStats();
+}
+
+// ── Score & issues ────────────────────────────────────────────────────────────
+function score(lm) {
+  if (!baseline) return null;
+  const cur = metrics(lm);
+  let pts = 100;
+  const issues = [];
+
+  // Head tilt  (ear height diff vs baseline)
+  const tilt = Math.abs(cur.earDiff - baseline.earDiff);
+  const tiltOk = tilt < 0.025;
+  if (!tiltOk) {
+    const sev = tilt > 0.05 ? 'bad' : 'warn';
+    pts -= sev === 'bad' ? 25 : 12;
+    issues.push({ id: 'tilt', sev, hint: cur.earDiff > baseline.earDiff ? 'tilting left' : 'tilting right' });
+  }
+
+  // Shoulder unevenness
+  const shDiff = Math.abs(cur.shoulderDiff - baseline.shoulderDiff);
+  const shOk = shDiff < 0.028;
+  if (!shOk) {
+    const sev = shDiff > 0.055 ? 'bad' : 'warn';
+    pts -= sev === 'bad' ? 25 : 12;
+    issues.push({ id: 'shoulders', sev, hint: cur.shoulderDiff > baseline.shoulderDiff ? 'right higher' : 'left higher' });
+  }
+
+  // Slouch: shoulder width shrinks when rounding forward
+  const widthRatio = cur.shoulderWidth / baseline.shoulderWidth;
+  const slouchOk = widthRatio > 0.90;
+  if (!slouchOk) {
+    const sev = widthRatio < 0.82 ? 'bad' : 'warn';
+    pts -= sev === 'bad' ? 30 : 15;
+    issues.push({ id: 'slouch', sev, hint: `${Math.round((1 - widthRatio) * 100)}% forward` });
+  }
+
+  // Neck forward: ear midpoint drifts forward (x offset increases in frontal cam)
+  const neckDrift = Math.abs(cur.neckOffset - baseline.neckOffset);
+  const neckOk = neckDrift < 0.03;
+  if (!neckOk) {
+    const sev = neckDrift > 0.06 ? 'bad' : 'warn';
+    pts -= sev === 'bad' ? 20 : 10;
+    issues.push({ id: 'neck', sev, hint: 'head forward' });
+  }
+
+  return {
+    score: Math.max(0, pts),
+    checks: {
+      tilt:      tiltOk   ? 'good' : issues.find(i => i.id === 'tilt')?.sev,
+      shoulders: shOk     ? 'good' : issues.find(i => i.id === 'shoulders')?.sev,
+      slouch:    slouchOk ? 'good' : issues.find(i => i.id === 'slouch')?.sev,
+      neck:      neckOk   ? 'good' : issues.find(i => i.id === 'neck')?.sev,
+    },
+    issues,
+  };
+}
+
+// ── Draw skeleton ─────────────────────────────────────────────────────────────
+// Map landmark index → issue id for colouring
+const CONNECTIONS = [
+  { pts: [7,  8],  issue: 'tilt'      },  // ears
+  { pts: [0,  7],  issue: 'tilt'      },  // nose–ear
+  { pts: [0,  8],  issue: 'tilt'      },
+  { pts: [7, 11],  issue: 'neck'      },  // ear–shoulder
+  { pts: [8, 12],  issue: 'neck'      },
+  { pts: [11, 12], issue: 'shoulders' },  // shoulder bar
+  { pts: [11, 23], issue: 'slouch'    },  // torso
+  { pts: [12, 24], issue: 'slouch'    },
+  { pts: [23, 24], issue: null        },  // hips
+  { pts: [13, 15], issue: null        },  // left arm
+  { pts: [14, 16], issue: null        },  // right arm
+  { pts: [11, 13], issue: null        },
+  { pts: [12, 14], issue: null        },
+];
+
+function connColor(issue, checks) {
+  if (!baseline || !checks) return '#5b8def';
+  if (!issue) return checks.slouch === 'good' ? '#4caf82' : '#5b8def';
+  const s = checks[issue];
+  return s === 'good' ? '#4caf82' : s === 'bad' ? '#e05c6a' : '#f0a830';
+}
+
+function lmX(lm) { return (1 - lm.x) * (video.videoWidth || 1280) * coverScale - coverOffX; }
+function lmY(lm) { return lm.y * (video.videoHeight || 720) * coverScale - coverOffY; }
+
+function drawSkeleton(lm, checks) {
+  for (const { pts, issue } of CONNECTIONS) {
+    const [a, b] = pts;
+    if ((lm[a].visibility ?? 1) < 0.4 || (lm[b].visibility ?? 1) < 0.4) continue;
+    const col = connColor(issue, checks);
+    const x1 = lmX(lm[a]), y1 = lmY(lm[a]);
+    const x2 = lmX(lm[b]), y2 = lmY(lm[b]);
+
+    ctx.save();
+    ctx.strokeStyle = col; ctx.lineWidth = 3; ctx.lineCap = 'round';
+    ctx.shadowColor = col; ctx.shadowBlur = 10;
+    ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+    ctx.restore();
+  }
+
+  // Joint dots
+  const joints = [0, 7, 8, 11, 12, 13, 14, 15, 16, 23, 24];
+  for (const idx of joints) {
+    if ((lm[idx].visibility ?? 1) < 0.4) continue;
+    const issueMap = { 7:'tilt', 8:'tilt', 11:'shoulders', 12:'shoulders', 23:'slouch', 24:'slouch', 0:'tilt' };
+    const col = connColor(issueMap[idx] ?? null, checks);
+    ctx.save();
+    ctx.fillStyle = col; ctx.shadowColor = col; ctx.shadowBlur = 12;
+    ctx.beginPath(); ctx.arc(lmX(lm[idx]), lmY(lm[idx]), 5, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  }
+}
+
+// ── UI updates ────────────────────────────────────────────────────────────────
+function setDot(id, state, hint) {
+  const dot = document.getElementById('d-' + id);
+  const hel = document.getElementById('h-' + id);
+  dot.className = 'dot' + (state ? ' ' + state : '');
+  if (hel) hel.textContent = hint ?? '';
+}
+
+function updateRing(s) {
+  const offset = C * (1 - s / 100);
+  ring.style.strokeDashoffset = offset;
+  ring.style.stroke = s >= 80 ? '#4caf82' : s >= 55 ? '#f0a830' : '#e05c6a';
+  scoreNum.textContent = Math.round(s);
+}
+
+function updateStats() {
+  const fmt = ms => {
+    const s = Math.floor(ms / 1000);
+    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+  };
+  document.getElementById('stat-good').textContent   = fmt(goodMs);
+  document.getElementById('stat-bad').textContent    = fmt(badMs);
+  document.getElementById('stat-alerts').textContent = alertCount;
+}
+
+// ── Alert ─────────────────────────────────────────────────────────────────────
+function beep() {
+  if (!soundOn) return;
+  const ac  = new AudioContext();
+  const osc = ac.createOscillator();
+  const gain = ac.createGain();
+  osc.connect(gain); gain.connect(ac.destination);
+  osc.frequency.value = 480;
+  gain.gain.setValueAtTime(0.18, ac.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + 0.4);
+  osc.start(); osc.stop(ac.currentTime + 0.4);
+}
+
+// ── Main MediaPipe callback ───────────────────────────────────────────────────
+let prevTs = 0;
+
+function onResults(results) {
+  lastResult = results;
+  const now = performance.now();
+  const dt  = prevTs ? Math.min(now - prevTs, 100) : 0;
+  prevTs = now;
+
+  // Draw camera (mirrored, cover-crop)
+  if (video.readyState >= 2) {
+    const vw = video.videoWidth, vh = video.videoHeight;
+    ctx.save();
+    ctx.translate(W, 0); ctx.scale(-1, 1);
+    ctx.drawImage(video,
+      coverOffX / coverScale, coverOffY / coverScale,
+      W / coverScale, H / coverScale,
+      0, 0, W, H);
+    ctx.restore();
+  }
+
+  const lm = results.poseLandmarks;
+  if (!lm) {
+    badge.textContent = 'Move into frame';
+    badge.classList.remove('hidden');
+    return;
+  }
+
+  const result = score(lm);
+  drawSkeleton(lm, result?.checks ?? null);
+
+  if (!baseline) {
+    calBtn.disabled = false;
+    badge.textContent = 'Sit straight and click Calibrate →';
+    badge.classList.remove('hidden');
+    return;
+  }
+
+  badge.classList.add('hidden');
+
+  // Update score ring
+  updateRing(result.score);
+
+  // Update check dots
+  const hintFor = id => result.issues.find(i => i.id === id)?.hint ?? '✓';
+  setDot('tilt',      result.checks.tilt,      hintFor('tilt'));
+  setDot('shoulders', result.checks.shoulders, hintFor('shoulders'));
+  setDot('slouch',    result.checks.slouch,    hintFor('slouch'));
+  setDot('neck',      result.checks.neck,      hintFor('neck'));
+
+  // Session tracking
+  if (result.score >= 65) {
+    goodMs    += dt;
+    badStreak  = 0;
+    if (alerted) {
+      alertBar.classList.remove('show');
+      alerted = false;
+    }
+  } else {
+    badMs     += dt;
+    badStreak += dt;
+    if (badStreak >= ALERT_AFTER && !alerted) {
+      alerted = true;
+      alertCount++;
+      const desc = result.issues.map(i => i.hint).join(' · ');
+      document.getElementById('alert-issues').textContent = desc;
+      alertBar.classList.add('show');
+      beep();
+    }
+  }
+
+  updateStats();
+}
+
+// ── MediaPipe Pose setup ──────────────────────────────────────────────────────
+const pose = new Pose({
+  locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${f}`,
+});
+pose.setOptions({
+  modelComplexity:        1,
+  smoothLandmarks:        true,
+  enableSegmentation:     false,
+  minDetectionConfidence: 0.6,
+  minTrackingConfidence:  0.55,
+});
+pose.onResults(onResults);
+
+const camera = new Camera(video, {
+  onFrame: async () => { await pose.send({ image: video }); },
+  width: 1280, height: 720,
+});
+
+camera.start().then(() => {
+  video.addEventListener('loadedmetadata', () => { updateCover(); resize(); });
+  resize();
+});
+
+// ── Calibrate button ──────────────────────────────────────────────────────────
+calBtn.addEventListener('click', calibrate);
+
+// ── Sound toggle ──────────────────────────────────────────────────────────────
+const soundToggle = document.getElementById('sound-toggle');
+soundToggle.addEventListener('click', () => {
+  soundOn = !soundOn;
+  soundToggle.classList.toggle('on', soundOn);
+});
+
+// ── Session clock ─────────────────────────────────────────────────────────────
+setInterval(() => { if (baseline) updateStats(); }, 1000);
+
+// ── Initial resize ────────────────────────────────────────────────────────────
+resize();
+</script>
+</body>
+</html>
