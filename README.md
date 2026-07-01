@@ -2,8 +2,6 @@
 
 Real-time posture detection in your browser — no install, no server, no account.
 
-![HTML](https://img.shields.io/badge/HTML-single%20file-orange) ![MediaPipe](https://img.shields.io/badge/MediaPipe-Pose-blue) ![License](https://img.shields.io/badge/license-MIT-blue)
-
 ## What it does
 
 - Detects your posture live via webcam using MediaPipe Pose
